@@ -6,6 +6,10 @@ import pandas as pd
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import roc_auc_score, average_precision_score
 
+def parse_csv_list(s: str):
+    parts = [p.strip() for p in (s or "").split(",") if p.strip()]
+    return parts
+
 def patient_split(df, seed=7, train=0.7, val=0.15):
     pats = df[["PATIENT", "COHORT"]].drop_duplicates()
     cases = pats[pats["COHORT"] == "case"]["PATIENT"].tolist()
@@ -76,7 +80,8 @@ def confusion_at_threshold(y_true, y_prob, thr):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--table", default="output/crc_patient_table_h6.csv")
+    ap.add_argument("--table", default="output/crc_patient_table_h6.csv", help="(legacy) single table")
+    ap.add_argument("--tables", default="", help="comma-separated list of patient tables")
     ap.add_argument("--label", default="label_patient")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--target_fpr", type=float, default=0.05)
@@ -85,13 +90,19 @@ def main():
     ap.add_argument("--learning_rate", type=float, default=0.03)
     ap.add_argument("--subsample", type=float, default=0.9)
     ap.add_argument("--colsample_bytree", type=float, default=0.9)
-    ap.add_argument("--test_thresholds", default="")  # e.g. "0.85,0.80,0.75"
+    ap.add_argument("--test_thresholds", default="")
     args = ap.parse_args()
 
-    print("loading", args.table, flush=True)
-    df = pd.read_csv(args.table)
+    tables = parse_csv_list(args.tables) if args.tables.strip() else [args.table]
 
-    drop = {"PATIENT","COHORT","outcome_has_crc",args.label}
+    print("loading tables:", tables, flush=True)
+    dfs = [pd.read_csv(t) for t in tables]
+    df = pd.concat(dfs, ignore_index=True)
+
+    # de-dupe patients if the same PATIENT appears twice (prevents leakage)
+    df = df.drop_duplicates(subset=["PATIENT"], keep="first").copy()
+
+    drop = {"PATIENT", "COHORT", "outcome_has_crc", args.label}
     feat_cols = [c for c in df.columns if c not in drop]
 
     X = df[feat_cols]

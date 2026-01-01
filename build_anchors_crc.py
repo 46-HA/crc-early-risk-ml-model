@@ -11,6 +11,36 @@ CRC_DESC_REGEX_DEFAULT = (
     r"overlapping malignant neoplasm of colon)"
 )
 
+FILES_NEEDED = ["patients.csv", "conditions.csv", "encounters.csv", "observations.csv"]
+
+def parse_data_dirs(args):
+    # Backwards compatible:
+    # - If --data_dirs is provided: use it
+    # - Else fall back to --data_dir
+    if args.data_dirs and args.data_dirs.strip():
+        dirs = [x.strip() for x in args.data_dirs.split(",") if x.strip()]
+    else:
+        dirs = [args.data_dir]
+    # Ensure they exist
+    missing = [d for d in dirs if not os.path.isdir(d)]
+    if missing:
+        raise FileNotFoundError(f"Missing data dirs: {missing}")
+    return dirs
+
+def read_concat_csv(data_dirs, filename):
+    dfs = []
+    used = []
+    for d in data_dirs:
+        p = os.path.join(d, filename)
+        if os.path.exists(p):
+            dfs.append(pd.read_csv(p))
+            used.append(p)
+    if not dfs:
+        raise FileNotFoundError(f"Missing {filename} in any of: {data_dirs}")
+    out = pd.concat(dfs, ignore_index=True)
+    print(f"loaded {filename}: {len(out):,} rows from {len(used)} files")
+    return out
+
 def pick_date_col(df, candidates):
     for c in candidates:
         if c in df.columns:
@@ -26,7 +56,10 @@ def month_start(ts):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data_dir", default="data")
+    ap.add_argument("--data_dir", default="data_all",
+                    help="Single dataset directory (legacy). Ignored if --data_dirs is set.")
+    ap.add_argument("--data_dirs", default="",
+                    help="Comma-separated list of dataset dirs, e.g. data_10k,data_30k")
     ap.add_argument("--out_dir", default="output")
     ap.add_argument("--lookback_months", type=int, default=24)
     ap.add_argument("--controls_per_case", type=int, default=1)
@@ -36,10 +69,14 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
 
-    patients = pd.read_csv(os.path.join(args.data_dir, "patients.csv"))
-    conditions = pd.read_csv(os.path.join(args.data_dir, "conditions.csv"))
-    encounters = pd.read_csv(os.path.join(args.data_dir, "encounters.csv"))
-    observations = pd.read_csv(os.path.join(args.data_dir, "observations.csv"))
+    data_dirs = parse_data_dirs(args)
+    print("DATA_DIRS:", data_dirs)
+
+    # Load and concat across dirs
+    patients = read_concat_csv(data_dirs, "patients.csv")
+    conditions = read_concat_csv(data_dirs, "conditions.csv")
+    encounters = read_concat_csv(data_dirs, "encounters.csv")
+    observations = read_concat_csv(data_dirs, "observations.csv")
 
     if "Id" not in patients.columns:
         raise KeyError(f"patients.csv missing Id, found {list(patients.columns)}")
@@ -52,7 +89,9 @@ def main():
     encounters[enc_date]  = to_dt_naive(encounters[enc_date])
     observations[obs_date]= to_dt_naive(observations[obs_date])
 
-    crc_mask = conditions["DESCRIPTION"].fillna("").str.contains(args.crc_regex, flags=re.IGNORECASE, regex=True)
+    crc_mask = conditions["DESCRIPTION"].fillna("").str.contains(
+        args.crc_regex, flags=re.IGNORECASE, regex=True
+    )
     crc_rows = conditions.loc[crc_mask].dropna(subset=[cond_date]).copy()
 
     print("Total condition rows:", len(conditions))
