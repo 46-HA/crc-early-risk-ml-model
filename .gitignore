@@ -1,0 +1,9 @@
+.DS_Store
+
+data_10k/
+data_30k/
+
+output/*.csv
+
+__pycache__/
+*.pyc
