@@ -1,9 +1,13 @@
+cat > .gitignore <<'EOF'
 .DS_Store
 
 data_10k/
 data_30k/
+data_all/
+data/
 
 output/*.csv
 
 __pycache__/
 *.pyc
+EOF
